@@ -1,8 +1,6 @@
 ﻿import os
 import time
 import json
-import urllib.request
-import urllib.error
 import subprocess
 import ctypes
 
