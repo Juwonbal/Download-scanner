@@ -46,7 +46,8 @@ File Content:
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
     data = {
@@ -57,29 +58,41 @@ File Content:
         "response_format": {"type": "json_object"}
     }
     
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=json.dumps(data).encode("utf-8"),
-        headers=headers,
-        method="POST"
-    )
+    curl_cmd = [
+        "curl.exe", "-s", "-X", "POST", "https://api.groq.com/openai/v1/chat/completions",
+        "-H", f"Authorization: Bearer {GROQ_API_KEY}",
+        "-H", "Content-Type: application/json",
+        "-d", json.dumps(data)
+    ]
     
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                return json.loads(result["choices"][0]["message"]["content"])
-        except urllib.error.HTTPError as e:
-            if e.code in [429, 500, 502, 503, 504] and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            return {"status": "Error", "reason": f"HTTP {e.code}", "action": "API failed", "details": ""}
+            result = subprocess.run(curl_cmd, capture_output=True, text=True, encoding='utf-8')
+            if result.returncode == 0:
+                resp_json = json.loads(result.stdout)
+                if "error" in resp_json:
+                    return {"status": "Error", "reason": resp_json["error"].get("message", "API Error"), "action": "Check API key", "details": ""}
+                
+                content = resp_json["choices"][0]["message"]["content"]
+                # Strip markdown code blocks if the AI includes them
+                content = content.strip()
+                if content.startswith("```json"): content = content[7:]
+                if content.startswith("```"): content = content[3:]
+                if content.endswith("```"): content = content[:-3]
+                
+                return json.loads(content)
+            else:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return {"status": "Error", "reason": f"Curl failed: {result.stderr}", "action": "Check network", "details": ""}
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
                 continue
-            return {"status": "Error", "reason": str(e), "action": "Check network/API key", "details": ""}
+            return {"status": "Error", "reason": str(e), "action": "Parsing failed", "details": ""}
+            
     return {"status": "Error", "reason": "Max retries exceeded", "action": "Check network", "details": ""}
 
 def process_file(filepath):
